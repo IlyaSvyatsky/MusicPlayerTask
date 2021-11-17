@@ -1,7 +1,8 @@
 package com.example.musicplayer
 
-import android.content.ContentResolver
-import android.content.ContentUris
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.*
 import android.database.Cursor
 import android.media.AudioManager
 import android.media.MediaPlayer
@@ -17,10 +18,9 @@ import java.io.IOException
 import java.util.*
 import kotlin.collections.ArrayList
 
-class MainActivity : SongChangeListener, AppCompatActivity() {
+class MainActivity :AppCompatActivity(), SongChangeListener, Playable {
 
     var mediaPlayer: MediaPlayer? = null
-
     var musicAdapter: MusicAdapter? = null
 
     private var musicLists: ArrayList<MusicList>? = null
@@ -31,6 +31,9 @@ class MainActivity : SongChangeListener, AppCompatActivity() {
 
     var startTime: TextView? = null
     var endTime: TextView? = null
+
+    var textViewTitle: TextView? = null
+    var textViewArtist: TextView? = null
 
     var playPauseCard: CardView? = null
     var musicRecyclerView: RecyclerView? = null
@@ -44,7 +47,10 @@ class MainActivity : SongChangeListener, AppCompatActivity() {
 
     var timer: Timer? = null
 
-    var currentSongListPosition = 0
+    private var currentSongListPosition = 0
+
+    var createNotification = CreateNotification()
+    var notificationManager: NotificationManager? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,82 +74,119 @@ class MainActivity : SongChangeListener, AppCompatActivity() {
         musicLists = ArrayList()
         mediaPlayer = MediaPlayer()
 
+        textViewTitle = findViewById(R.id.musicTitle)
+        textViewArtist = findViewById(R.id.musicArtist)
+
         getMusicFiles()
 
-        btnPrevious?.setOnClickListener {
+        buttonPrevious()
+        buttonNext()
+        buttonPlayPauseCard()
+        playerSeekBar()
 
-            var prevSongListPosition: Int = currentSongListPosition - 1
-
-            if(prevSongListPosition < 0) {
-                prevSongListPosition = musicLists?.size!! - 1 //play last song
-            }
-
-            musicLists?.get(currentSongListPosition)?.isPlaying = false
-            musicLists?.get(prevSongListPosition)?.isPlaying = true
-
-            musicAdapter?.updateList(musicLists!!)
-
-            musicRecyclerView?.scrollToPosition(prevSongListPosition)
-
-            onChanged(prevSongListPosition)
-        }
-
-        btnNext?.setOnClickListener {
-
-            var nextSongListPosition: Int = currentSongListPosition + 1
-
-            if(nextSongListPosition >= musicLists?.size!!) {
-                nextSongListPosition = 0
-            }
-
-            musicLists?.get(currentSongListPosition)?.isPlaying = false
-            musicLists?.get(nextSongListPosition)?.isPlaying = true
-
-            musicAdapter?.updateList(musicLists!!)
-
-            musicRecyclerView?.scrollToPosition(nextSongListPosition)
-
-            onChanged(nextSongListPosition)
-        }
-
-        playPauseCard?.setOnClickListener {
-            if(isPlaying) {
-                isPlaying = false
-
-                mediaPlayer?.pause()
-                btnPlayPause?.setImageResource(R.drawable.ic_play)
-            }
-            else {
-                isPlaying = true
-                mediaPlayer?.start()
-                btnPlayPause?.setImageResource(R.drawable.ic_pause)
-            }
-        }
-
-        //bar
-        playerSeekBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(p0: SeekBar?, p1: Int, p2: Boolean) {
-                if(p2) {
-                    if(isPlaying) {
-                        mediaPlayer?.seekTo(p1)
-                    }
-                    else {
-                        mediaPlayer?.seekTo(0)
-                    }
-                }
-            }
-
-            override fun onStartTrackingTouch(p0: SeekBar?) {
-
-            }
-
-            override fun onStopTrackingTouch(p0: SeekBar?) {
-            }
-
-        })
+        createChannel()
+        registerReceiver(broadcastReceiver, IntentFilter("TRACKS_TRACKS"))
+        startService(Intent(baseContext, OnClearFromRecentServices::class.java))
     }
 
-    //get
+    private fun createChannel() {
+        val channel = NotificationChannel(
+            createNotification.CHANNEL_ID,
+            "KOD Dev", NotificationManager.IMPORTANCE_LOW
+        )
+        notificationManager = getSystemService(NotificationManager::class.java)
+        if (notificationManager != null) {
+            notificationManager!!.createNotificationChannel(channel)
+        }
+    }
+
+    private var broadcastReceiver: BroadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.extras!!.getString("actionname")) {
+                createNotification.ACTION_PREVIOUS -> buttonNotificationPrevious()
+                createNotification.ACTION_PLAY -> if (isPlaying) {
+                    buttonNotificationPause()
+                } else {
+                    buttonNotificationPlay()
+                }
+                createNotification.ACTION_NEXT -> buttonNotificationNext()
+            }
+        }
+    }
+
+    override fun buttonNotificationPrevious() {
+
+        var prevSongListPosition: Int = currentSongListPosition - 1
+
+        if(prevSongListPosition < 0) {
+            prevSongListPosition = musicLists?.size!! - 1 //play last song
+        }
+
+        musicLists?.get(currentSongListPosition)?.isPlaying = false
+        musicLists?.get(prevSongListPosition)?.isPlaying = true
+
+        musicAdapter?.updateList(musicLists!!)
+
+        musicRecyclerView?.scrollToPosition(prevSongListPosition)
+        onChanged(prevSongListPosition)
+
+        createNotification.createNotification(this, musicLists!![prevSongListPosition], R.drawable.ic_pause, prevSongListPosition, musicLists!!.size-1)
+        textViewTitle?.text = musicLists!![prevSongListPosition].title
+    }
+
+    override fun buttonNotificationPlay() {
+
+        createNotification.createNotification(this, musicLists!![currentSongListPosition], R.drawable.ic_pause, currentSongListPosition, musicLists!!.size-1)
+        textViewTitle?.text = musicLists!![currentSongListPosition].title
+        if(isPlaying) {
+            isPlaying = false
+            mediaPlayer?.pause()
+            btnPlayPause?.setImageResource(R.drawable.ic_play)
+        }
+        else {
+            isPlaying = true
+            mediaPlayer?.start()
+            btnPlayPause?.setImageResource(R.drawable.ic_pause)
+        }
+    }
+
+    override fun buttonNotificationPause() {
+
+        createNotification.createNotification(this, musicLists!![currentSongListPosition], R.drawable.ic_play, currentSongListPosition, musicLists!!.size-1)
+        textViewTitle?.text = musicLists!![currentSongListPosition].title
+        if(isPlaying) {
+            isPlaying = false
+            mediaPlayer?.pause()
+            btnPlayPause?.setImageResource(R.drawable.ic_play)
+        }
+        else {
+            isPlaying = true
+            mediaPlayer?.start()
+            btnPlayPause?.setImageResource(R.drawable.ic_pause)
+        }
+    }
+
+    override fun buttonNotificationNext() {
+
+        var nextSongListPosition: Int = currentSongListPosition + 1
+
+        if(nextSongListPosition >= musicLists?.size!!) {
+            nextSongListPosition = 0
+        }
+
+        musicLists?.get(currentSongListPosition)?.isPlaying = false
+        musicLists?.get(nextSongListPosition)?.isPlaying = true
+
+        musicAdapter?.updateList(musicLists!!)
+
+        musicRecyclerView?.scrollToPosition(nextSongListPosition)
+
+        onChanged(nextSongListPosition)
+
+        createNotification.createNotification(this, musicLists!![nextSongListPosition], R.drawable.ic_pause, nextSongListPosition, musicLists!!.size-1)
+        textViewTitle?.text = musicLists!![nextSongListPosition].title
+    }
+
     private fun getMusicFiles() {
 
         val contentResolver: ContentResolver = contentResolver
@@ -203,7 +246,6 @@ class MainActivity : SongChangeListener, AppCompatActivity() {
 
         mediaPlayer?.setOnPreparedListener {
             val getTotalDuration: Int = it.duration
-
             val generateDuration = String.format(
                 Locale.getDefault(), "%02d:%02d",
                 java.util.concurrent.TimeUnit.MILLISECONDS.toMinutes(getTotalDuration.toLong()),
@@ -219,6 +261,8 @@ class MainActivity : SongChangeListener, AppCompatActivity() {
             playerSeekBar?.max = getTotalDuration
 
             btnPlayPause?.setImageResource(R.drawable.ic_pause)
+
+            createNotification.createNotification(this, musicLists!![currentSongListPosition], R.drawable.ic_pause, 1, musicLists!!.size-1)
         }
 
         timer = Timer()
@@ -256,249 +300,92 @@ class MainActivity : SongChangeListener, AppCompatActivity() {
             playerSeekBar?.progress = 0
         }
     }
-}
 
+    private fun buttonPrevious() {
 
-/*package com.example.musicplayer
+        btnPrevious?.setOnClickListener {
 
-import android.content.*
-import androidx.appcompat.app.AppCompatActivity
-import android.os.Bundle
-import android.provider.MediaStore
-import android.view.View
-import android.widget.*
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
+            var prevSongListPosition: Int = currentSongListPosition - 1
 
-import java.util.*
-import kotlin.collections.ArrayList
+            if(prevSongListPosition < 0) {
+                prevSongListPosition = musicLists?.size!! - 1 //play last song
+            }
 
-import android.widget.Toast
+            musicLists?.get(currentSongListPosition)?.isPlaying = false
+            musicLists?.get(prevSongListPosition)?.isPlaying = true
 
-import android.os.IBinder
+            musicAdapter?.updateList(musicLists!!)
 
-import com.example.musicplayer.MediaPlayerService.LocalBinder
-import android.content.ContentResolver
-import androidx.cardview.widget.CardView
-
-class MainActivity : AppCompatActivity() {
-
-    var btnPlayPause: ImageView? = null
-    var btnNext: ImageView? = null
-    var btnPrevious: ImageView? = null
-
-    var playPauseCard: CardView? = null
-    var musicRecyclerView: RecyclerView? = null
-
-    var menuBtn: LinearLayout? = null
-    var searchBtn: LinearLayout? = null
-
-    private var musicLists: ArrayList<MusicList>? = null
-
-    //var mediaPlayer: MediaPlayer? = null
-
-    var startTime: TextView? = null
-    var endTime: TextView? = null
-    var isPlaying: Boolean = false
-
-    var playerSeekBar: SeekBar? = null
-
-    var timer: Timer? = null
-
-    var currentSongListPosition = 0
-
-    var musicAdapter: MusicAdapter? = null
-
-
-    private var player: MediaPlayerService? = null
-    var serviceBound = false
-
-    var audioList: ArrayList<Audio>? = null
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        /*val decodeView = window?.decorView
-
-        val options: Int = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-        decodeView?.systemUiVisibility = options*/
-        setContentView(R.layout.activity_main)
-
-
-        btnPrevious = findViewById(R.id.previousImg)
-        btnNext = findViewById(R.id.nextBtn)
-        btnPlayPause = findViewById(R.id.playPauseImg)
-
-        playPauseCard = findViewById(R.id.playPauseCard)
-        musicRecyclerView = findViewById(R.id.musicRecyclerView)
-
-        menuBtn = findViewById(R.id.menuBtn)
-        searchBtn = findViewById(R.id.searchBtn)
-
-        startTime = findViewById(R.id.startTime)
-        endTime = findViewById(R.id.endTime)
-
-        playerSeekBar = findViewById(R.id.playerSeekBar)
-
-        loadAudio();
-        initRecyclerView()
-        playAudio()
-        //play the first audio in the ArrayList
-        //audioList?.get(0)?.data?.let { playAudio(it) };
-
-    }
-
-    //Binding this Client to the AudioPlayer Service
-    private val serviceConnection: ServiceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName, service: IBinder) {
-            // We've bound to LocalService, cast the IBinder and get LocalService instance
-            val binder = service as LocalBinder
-            player = binder.service
-            serviceBound = true
-            Toast.makeText(this@MainActivity, "Service Bound", Toast.LENGTH_SHORT).show()
-        }
-
-        override fun onServiceDisconnected(name: ComponentName) {
-            serviceBound = false
+            musicRecyclerView?.scrollToPosition(prevSongListPosition)
+            onChanged(prevSongListPosition)
         }
     }
 
-    private fun loadAudio() {
-        val contentResolver = contentResolver
-        val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val selection = MediaStore.Audio.Media.IS_MUSIC + "!= 0"
-        val sortOrder = MediaStore.Audio.Media.TITLE + " ASC"
-        val cursor = contentResolver.query(uri, null, selection, null, sortOrder)
-        if (cursor != null && cursor.count > 0) {
-            audioList = ArrayList()
-            while (cursor.moveToNext()) {
-                val data = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA))
-                val title = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE))
-                val album = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM))
-                val artist = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST))
+    private fun buttonNext() {
 
-                // Save to audioList
-                audioList!!.add(Audio(data, title, album, artist))
+        btnNext?.setOnClickListener {
+
+            var nextSongListPosition: Int = currentSongListPosition + 1
+
+            if(nextSongListPosition >= musicLists?.size!!) {
+                nextSongListPosition = 0
+            }
+
+            musicLists?.get(currentSongListPosition)?.isPlaying = false
+            musicLists?.get(nextSongListPosition)?.isPlaying = true
+
+            musicAdapter?.updateList(musicLists!!)
+
+            musicRecyclerView?.scrollToPosition(nextSongListPosition)
+
+            onChanged(nextSongListPosition)
+        }
+    }
+
+    private fun buttonPlayPauseCard() {
+
+        playPauseCard?.setOnClickListener {
+            if(isPlaying) {
+                isPlaying = false
+                mediaPlayer?.pause()
+                btnPlayPause?.setImageResource(R.drawable.ic_play)
+            }
+            else {
+                isPlaying = true
+                mediaPlayer?.start()
+                btnPlayPause?.setImageResource(R.drawable.ic_pause)
             }
         }
-        cursor!!.close()
     }
 
-    private fun initRecyclerView() {
-        if (audioList!!.size > 0) {
-            val recyclerView = findViewById<RecyclerView>(R.id.musicRecyclerView)
-            val adapter = AudioAdapter(audioList!!, application)
-            recyclerView.adapter = adapter
-            recyclerView.layoutManager = LinearLayoutManager(this)
-            /*recyclerView.addOnItemTouchListener(
-                CustomTouchListener(
-                    this,
-                    object : onItemClickListener() {
-                        fun onClick(view: View?, index: Int) {
-                            playAudio(index)
-                        }
-                    })
-            )*/
-        }
-    }
+    private fun playerSeekBar() {
 
-    private fun playAudio(media: Int) {
-        //Check is service is active
-        if (!serviceBound) {
-            val playerIntent = Intent(this, MediaPlayerService::class.java)
-            playerIntent.putExtra("media", media)
-            startService(playerIntent)
-            bindService(playerIntent, serviceConnection, Context.BIND_AUTO_CREATE)
-        } else {
-            //Service is active
-            //Send media with BroadcastReceiver
-        }
-    }
+        playerSeekBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(p0: SeekBar?, p1: Int, p2: Boolean) {
+                if(p2) {
+                    if(isPlaying) {
+                        mediaPlayer?.seekTo(p1)
+                    }
+                    else {
+                        mediaPlayer?.seekTo(0)
+                    }
+                }
+            }
 
-    override fun onSaveInstanceState(savedInstanceState: Bundle) {
-        savedInstanceState.putBoolean("ServiceState", serviceBound)
-        super.onSaveInstanceState(savedInstanceState)
-    }
+            override fun onStartTrackingTouch(p0: SeekBar?) {
 
-    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
-        super.onRestoreInstanceState(savedInstanceState)
-        serviceBound = savedInstanceState.getBoolean("ServiceState")
+            }
+
+            override fun onStopTrackingTouch(p0: SeekBar?) {
+            }
+
+        })
+
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        if (serviceBound) {
-            unbindService(serviceConnection)
-            //service is active
-            player!!.stopSelf()
-        }
+        notificationManager!!.cancelAll()
+        unregisterReceiver(broadcastReceiver)
     }
-}*/
-
-
-
-
-
-/*package com.example.musicplayer
-
-import android.content.ContentResolver
-import android.content.ContentUris
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.database.Cursor
-import android.net.Uri
-import android.os.Build
-import androidx.appcompat.app.AppCompatActivity
-import android.os.Bundle
-import android.os.Environment
-import android.provider.MediaStore
-import android.view.LayoutInflater
-import android.view.View
-import android.view.View.inflate
-import android.view.ViewGroup
-import android.widget.*
-import androidx.cardview.widget.CardView
-import androidx.core.content.res.ColorStateListInflaterCompat.inflate
-import androidx.core.content.res.ComplexColorCompat.inflate
-import androidx.core.graphics.drawable.DrawableCompat.inflate
-import androidx.navigation.NavController
-import androidx.navigation.Navigation
-import androidx.navigation.ui.NavigationUI
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-
-import com.karumi.dexter.Dexter
-import com.karumi.dexter.MultiplePermissionsReport
-import com.karumi.dexter.PermissionToken
-import com.karumi.dexter.listener.PermissionDeniedResponse
-import com.karumi.dexter.listener.PermissionGrantedResponse
-import com.karumi.dexter.listener.PermissionRequest
-import com.karumi.dexter.listener.multi.MultiplePermissionsListener
-import com.karumi.dexter.listener.single.PermissionListener
-import java.io.File
-import java.util.jar.Manifest
-
-class MainActivity : AppCompatActivity() {
-
-    private var mNavController: NavController? = null
-
-    var btnPlayPause: ImageView? = null
-    var btnNext: ImageView? = null
-    var btnPrevious: ImageView? = null
-
-    var playPauseCard: CardView? = null
-    var musicRecyclerView: RecyclerView? = null
-
-    var menuBtn: LinearLayout? = null
-    var searchBtn: LinearLayout? = null
-
-    private var musicLists: ArrayList<MusicList>? = null
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-
-        setContentView(R.layout.activity_main)
-
-    }
-}*/
+}
